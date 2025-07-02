@@ -1,0 +1,4 @@
+data/preprocessed/flows_combined.csv filter=lfs diff=lfs merge=lfs -text
+data/raw/pcaps/bulk/* filter=lfs diff=lfs merge=lfs -text
+data/raw/pcaps/video/* filter=lfs diff=lfs merge=lfs -text
+data/raw/pcaps/voip/* filter=lfs diff=lfs merge=lfs -text
