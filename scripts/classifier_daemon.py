@@ -24,6 +24,38 @@ DSCP_MAP = {
     'unknown': 0  # Best-effort
 }
 
+# Add these helper functions near the top of your file
+
+def is_flow_classified(src_ip, dst_ip):
+    """
+    Check if the flow has already been classified. The comparison is order-insensitive.
+    """
+    try:
+        with open("classified_flows.csv", "r") as f:
+            for line in f:
+                parts = line.strip().split(',')
+                if len(parts) >= 2:
+                    logged_src, logged_dst = parts[0:2]
+                    if {logged_src, logged_dst} == {src_ip, dst_ip}:
+                        return True
+    except FileNotFoundError:
+        # If the file doesn't exist, no flow has been classified yet.
+        return False
+    return False
+
+def rule_exists(src, dst, dscp):
+    """
+    Check if an iptables rule already exists.
+    Returns True if the rule exists, else False.
+    """
+    cmd = [
+        "iptables", "-t", "mangle", "-C", "PREROUTING",
+        "-s", src, "-d", dst,
+        "-j", "DSCP", "--set-dscp", str(dscp)
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return result.returncode == 0
+
 def canonical_key(ip1, ip2, port1, port2, proto):
     return tuple(sorted([(ip1, port1), (ip2, port2)]) + [proto])
 
@@ -48,13 +80,19 @@ def packet_handler(pkt):
 
         flow[direction].append((timestamp, size))
 
-        if len(flow['fwd']) + len(flow['bwd']) >= 5:
+        if len(flow['fwd']) + len(flow['bwd']) >= 20:
             classify_flow(key, ip.src, ip.dst)
 
     except Exception as e:
         print(f"[!] Error handling packet: {e}")
 
 def classify_flow(key, src_ip, dst_ip):
+    # Prevent duplicate classification based on the CSV log
+    if is_flow_classified(src_ip, dst_ip):
+        print(f"[~] Flow {src_ip} → {dst_ip} already classified, skipping.")
+        del flow_table[key]
+        return
+
     flow = flow_table[key]
     fwd = flow['fwd']
     bwd = flow['bwd']
@@ -73,7 +111,7 @@ def classify_flow(key, src_ip, dst_ip):
             sum(sizes) / len(sizes),
             sum(iats) / len(iats) if iats else 0
         )
-
+    
     fwd_count, fwd_bytes, fwd_avg_size, fwd_iat = stats(fwd)
     bwd_count, bwd_bytes, bwd_avg_size, bwd_iat = stats(bwd)
 
@@ -84,24 +122,25 @@ def classify_flow(key, src_ip, dst_ip):
 
     try:
         row = {
-            "src_port":     src_port,
-            "dst_port":     dst_port,
-            "TotFwdPkts":   fwd_count,
-            "TotBwdPkts":   bwd_count,
-            "TotLenFwdPkts":fwd_bytes,
-            "TotLenBwdPkts":bwd_bytes,
-            "FwdPktLenMean":fwd_avg_size,
-            "BwdPktLenMean":bwd_avg_size,
-            "FwdIATMean":   fwd_iat,
-            "BwdIATMean":   bwd_iat,
-            "FlowDuration": duration,
-            "FlowByts/s":   (fwd_bytes + bwd_bytes) / duration,
-            "FlowPkts/s":   (fwd_count + bwd_count) / duration,
-            "protocol":     proto_encoder.transform([proto])[0]
+            "src_port":      src_port,
+            "dst_port":      dst_port,
+            "TotFwdPkts":    fwd_count,
+            "TotBwdPkts":    bwd_count,
+            "TotLenFwdPkts": fwd_bytes,
+            "TotLenBwdPkts": bwd_bytes,
+            "FwdPktLenMean": fwd_avg_size,
+            "BwdPktLenMean": bwd_avg_size,
+            "FwdIATMean":    fwd_iat,
+            "BwdIATMean":    bwd_iat,
+            "FlowDuration":  duration,
+            "FlowByts/s":    (fwd_bytes + bwd_bytes) / duration,
+            "FlowPkts/s":    (fwd_count + bwd_count) / duration,
+            "protocol":      proto_encoder.transform([proto])[0]
         }
 
         df = pd.DataFrame([row])
         df = df[feature_order]  # enforce exact order
+        print("[DEBUG] Feature row:\n", df)
 
         proba = model.predict_proba(df)[0]
         confidence = max(proba)
@@ -115,20 +154,26 @@ def classify_flow(key, src_ip, dst_ip):
         print(f"[+] Flow {src_ip} → {dst_ip} classified as {label} (conf={confidence:.2f}) → DSCP {dscp}")
 
         for s, d in [(src_ip, dst_ip), (dst_ip, src_ip)]:
-            cmd = [
-                "iptables", "-t", "mangle", "-A", "PREROUTING",
-                "-s", s, "-d", d,
-                "-j", "DSCP", "--set-dscp", str(dscp)
-            ]
-            subprocess.run(cmd)
-            print(f"[+] iptables rule: {' '.join(cmd)}")
+            # Safeguard: Append iptables rule only if it doesn't present
+            if not rule_exists(s, d, dscp):
+                cmd = [
+                    "iptables", "-t", "mangle", "-A", "PREROUTING",
+                    "-s", s, "-d", d,
+                    "-j", "DSCP", "--set-dscp", str(dscp)
+                ]
+                subprocess.run(cmd)
+                print(f"[+] iptables rule added: {' '.join(cmd)}")
+            else:
+                print(f"[~] iptables rule already exists for {s} → {d} with DSCP {dscp}")
 
+        # Log the classified flow for future duplicate avoidance
         with open("classified_flows.csv", "a") as log:
             log.write(f"{src_ip},{dst_ip},{label},{confidence:.2f}\n")
 
     except Exception as e:
         print(f"[!] Classification error: {e}")
 
+    # Remove the flow from the table no matter the result.
     del flow_table[key]
 
 def sniff_on(iface):

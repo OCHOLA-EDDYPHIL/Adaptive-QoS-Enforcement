@@ -66,8 +66,8 @@ def run():
     time.sleep(1)
     h2.cmd("wget --timeout=5 --tries=1 http://10.0.3.2/largefile || curl http://10.0.3.2/largefile &")
 
-    info("[*] Waiting 30 seconds for flows to complete...\n")
-    time.sleep(30)
+    info("[*] Waiting 60 seconds for flows to complete...\n")
+    time.sleep(60)
 
     # Diagnostics
     info("\n[+] iptables mangle rules (from r1):\n")
