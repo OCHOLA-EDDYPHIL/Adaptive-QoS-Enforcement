@@ -15,6 +15,7 @@ feature_order = joblib.load(model_path.replace(".pkl", "_features.pkl"))
 
 # === Flow state ===
 flow_table = defaultdict(lambda: {'fwd': [], 'bwd': [], 'start': None})
+classified_flow_keys = set()  # in-memory set to avoid repeated classification
 
 # DSCP mappings
 DSCP_MAP = {
@@ -24,30 +25,7 @@ DSCP_MAP = {
     'unknown': 0  # Best-effort
 }
 
-# Add these helper functions near the top of your file
-
-def is_flow_classified(src_ip, dst_ip):
-    """
-    Check if the flow has already been classified. The comparison is order-insensitive.
-    """
-    try:
-        with open("classified_flows.csv", "r") as f:
-            for line in f:
-                parts = line.strip().split(',')
-                if len(parts) >= 2:
-                    logged_src, logged_dst = parts[0:2]
-                    if {logged_src, logged_dst} == {src_ip, dst_ip}:
-                        return True
-    except FileNotFoundError:
-        # If the file doesn't exist, no flow has been classified yet.
-        return False
-    return False
-
 def rule_exists(src, dst, dscp):
-    """
-    Check if an iptables rule already exists.
-    Returns True if the rule exists, else False.
-    """
     cmd = [
         "iptables", "-t", "mangle", "-C", "PREROUTING",
         "-s", src, "-d", dst,
@@ -57,7 +35,10 @@ def rule_exists(src, dst, dscp):
     return result.returncode == 0
 
 def canonical_key(ip1, ip2, port1, port2, proto):
-    return tuple(sorted([(ip1, port1), (ip2, port2)]) + [proto])
+    if (ip1, port1) <= (ip2, port2):
+        return (ip1, port1, ip2, port2, proto)
+    else:
+        return (ip2, port2, ip1, port1, proto)
 
 def packet_handler(pkt):
     try:
@@ -70,6 +51,9 @@ def packet_handler(pkt):
 
         key = canonical_key(ip.src, ip.dst, trans.sport, trans.dport, proto)
         direction = 'fwd' if (ip.src, trans.sport) <= (ip.dst, trans.dport) else 'bwd'
+
+        if key in classified_flow_keys:
+            return
 
         flow = flow_table[key]
         timestamp = pkt.time
@@ -84,13 +68,12 @@ def packet_handler(pkt):
             classify_flow(key, ip.src, ip.dst)
 
     except Exception as e:
-        print(f"[!] Error handling packet: {e}")
+        print(f"[!] Error handling packet: {type(e).__name__}: {e}")
 
 def classify_flow(key, src_ip, dst_ip):
-    # Prevent duplicate classification based on the CSV log
-    if is_flow_classified(src_ip, dst_ip):
+    if key in classified_flow_keys:
         print(f"[~] Flow {src_ip} → {dst_ip} already classified, skipping.")
-        del flow_table[key]
+        flow_table.pop(key, None)
         return
 
     flow = flow_table[key]
@@ -111,12 +94,11 @@ def classify_flow(key, src_ip, dst_ip):
             sum(sizes) / len(sizes),
             sum(iats) / len(iats) if iats else 0
         )
-    
+
     fwd_count, fwd_bytes, fwd_avg_size, fwd_iat = stats(fwd)
     bwd_count, bwd_bytes, bwd_avg_size, bwd_iat = stats(bwd)
 
-    # Extract ports from key
-    (ip1, port1), (ip2, port2), proto = key
+    (ip1, port1, ip2, port2, proto) = key
     src_port = port1 if src_ip == ip1 else port2
     dst_port = port2 if dst_ip == ip2 else port1
 
@@ -139,7 +121,7 @@ def classify_flow(key, src_ip, dst_ip):
         }
 
         df = pd.DataFrame([row])
-        df = df[feature_order]  # enforce exact order
+        df = df[feature_order]
         print("[DEBUG] Feature row:\n", df)
 
         proba = model.predict_proba(df)[0]
@@ -154,7 +136,6 @@ def classify_flow(key, src_ip, dst_ip):
         print(f"[+] Flow {src_ip} → {dst_ip} classified as {label} (conf={confidence:.2f}) → DSCP {dscp}")
 
         for s, d in [(src_ip, dst_ip), (dst_ip, src_ip)]:
-            # Safeguard: Append iptables rule only if it doesn't present
             if not rule_exists(s, d, dscp):
                 cmd = [
                     "iptables", "-t", "mangle", "-A", "PREROUTING",
@@ -166,15 +147,15 @@ def classify_flow(key, src_ip, dst_ip):
             else:
                 print(f"[~] iptables rule already exists for {s} → {d} with DSCP {dscp}")
 
-        # Log the classified flow for future duplicate avoidance
         with open("classified_flows.csv", "a") as log:
             log.write(f"{src_ip},{dst_ip},{label},{confidence:.2f}\n")
 
-    except Exception as e:
-        print(f"[!] Classification error: {e}")
+        classified_flow_keys.add(key)
 
-    # Remove the flow from the table no matter the result.
-    del flow_table[key]
+    except Exception as e:
+        print(f"[!] Classification error: {type(e).__name__}: {e}")
+
+    flow_table.pop(key, None)
 
 def sniff_on(iface):
     print(f"[*] Sniffing on {iface}...")

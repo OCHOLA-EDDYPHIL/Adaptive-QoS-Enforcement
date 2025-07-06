@@ -42,7 +42,7 @@ def run():
 
     # Start CAKE on each interface
     for iface in ['r1-eth0', 'r1-eth1', 'r1-eth2']:
-        r1.cmd(f"tc qdisc replace dev {iface} root cake bandwidth 10mbit diffserv4")
+        r1.cmd(f"tc qdisc replace dev {iface} root cake bandwidth 10mbit diffserv8")
 
     # Start classifier daemon
     info("[*] Starting classifier daemon in background on router...\n")
