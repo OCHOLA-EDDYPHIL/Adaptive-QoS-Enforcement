@@ -33,24 +33,26 @@ def train_model(input_csv, output_model):
     clf = DecisionTreeClassifier(criterion="entropy", max_depth=10)
     clf.fit(X_train, y_train)
 
-    # Evaluate
-    y_pred = clf.predict(X_test)
+    # Evaluation
     print("[*] Classification Report:")
-    print(classification_report(y_test, y_pred, target_names=le.classes_))
+    print(classification_report(y_test, clf.predict(X_test), target_names=le.classes_))
     print("[*] Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
+    print(confusion_matrix(y_test, clf.predict(X_test)))
 
     # Cross-validation
     scores = cross_val_score(clf, X, y_encoded, cv=5)
     print(f"[*] Cross-validation accuracy: {scores.mean():.4f}")
 
-    # Save model and label encoder
+    # Save model, encoders, feature order
     joblib.dump(clf, output_model)
     joblib.dump(le, output_model.replace(".pkl", "_labels.pkl"))
     joblib.dump(proto_encoder, output_model.replace(".pkl", "_proto.pkl"))
+    joblib.dump(X.columns.tolist(), output_model.replace(".pkl", "_features.pkl"))
+
     print(f"[+] Model saved to {output_model}")
     print(f"[+] Label encoder saved to {output_model.replace('.pkl', '_labels.pkl')}")
     print(f"[+] Protocol encoder saved to {output_model.replace('.pkl', '_proto.pkl')}")
+    print(f"[+] Feature order saved to {output_model.replace('.pkl', '_features.pkl')}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
