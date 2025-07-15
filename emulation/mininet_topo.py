@@ -35,11 +35,11 @@ def run_topo():
     net = Mininet(topo=topo, link=TCLink, controller=None)
     net.start()
 
-    # Set default routes
-    for h in ['h1', 'h2', 'h3']:
-        net.get(h).cmd('ip route add default via 10.0.0.1')
-
     r1 = net.get('r1')
+
+    r1.cmd("ip addr flush dev r1-eth0")
+    r1.cmd("ip addr add 10.0.1.1/24 dev r1-eth0")
+    r1.cmd("ip link set r1-eth0 up")
     # Start CAKE on each interface
     for iface in ['r1-eth0', 'r1-eth1', 'r1-eth2']:
         r1.cmd(f"tc qdisc replace dev {iface} root cake bandwidth 10mbit diffserv8")
@@ -48,6 +48,7 @@ def run_topo():
     daemon = "/home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/scripts/classifier_daemon.py"
     r1.cmd(f"source /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/.venv/bin/activate")
     r1.cmd(f"python3 {daemon} &")
+
 
     print("[*] Ready. Use xterm h1 h2 h3 to interact. Start daemon on r1.")
     CLI(net)
