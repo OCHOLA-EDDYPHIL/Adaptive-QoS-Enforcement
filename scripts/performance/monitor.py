@@ -7,7 +7,7 @@ from threading import Thread, Lock
 
 # === Settings ===
 INTERFACE = "r1-eth0"  # Single router interface due to Mininet switch
-OUTPUT_CSV = "performance_metrics.csv"
+OUTPUT_CSV = "performance/performance_metrics.csv"
 SAMPLING_INTERVAL = 1  # seconds
 WINDOW_SIZE = 10  # number of recent packets to compute jitter
 
