@@ -1,37 +1,59 @@
-#!/usr/bin/env python3
-import subprocess
-import threading
 import random
+import threading
 import time
 
-def run_voip_calls():
-    while True:
-        port = random.randint(5060, 5090)
-        print(f"[VOIP] New call on port {port}")
-        subprocess.Popen(["sipp", "-sn", "uac", "10.0.0.3", "-p", str(port), "-m", "1"])
-        time.sleep(random.uniform(5, 15))
 
-def run_video_streaming():
-    while True:
-        print("[VIDEO] Streaming video...")
-        subprocess.Popen(["wget", "http://10.0.0.3:8080/bigvideo.mp4", "-O", "/dev/null"])
-        time.sleep(random.uniform(10, 20))
+# Traffic functions
+def voip_call(src, dst_ip):
+    port = random.randint(5060, 5090)
+    print(f"[VOIP] {src.name} -> {dst_ip}:{port}")
+    src.popen(f"sipp -sn uac {dst_ip}:{port} -p {port} -m 1 &")
 
-def run_video_call():
-    while True:
-        print("[VIDEO CALL] Simulating call...")
-        subprocess.Popen(["iperf3", "-c", "10.0.0.3", "-u", "-b", "3M", "-t", "30", "-p", "5010"])
-        time.sleep(random.uniform(15, 30))
+def video_stream(src, dst_ip):
+    print(f"[VIDEO] {src.name} streaming from {dst_ip}")
+    src.popen(f"wget http://{dst_ip}:8080/largefile -O /dev/null &")
 
-def run_bulk_transfer():
-    while True:
-        print("[BULK] Starting rsync + iperf...")
-        subprocess.Popen(["rsync", "bigfile.dat", "user@10.0.0.3:/dev/null"])
-        subprocess.Popen(["iperf3", "-c", "10.0.0.3", "-p", "5003", "-t", "60"])
-        time.sleep(random.uniform(20, 40))
+def video_call(src, dst_ip):
+    port = 5010
+    print(f"[VIDEO CALL] {src.name} -> {dst_ip}:{port}")
+    src.popen(f"iperf3 -c {dst_ip} -u -b 3M -t 20 -p {port} &")
 
-if __name__ == "__main__":
-    threading.Thread(target=run_voip_calls).start()
-    threading.Thread(target=run_video_streaming).start()
-    threading.Thread(target=run_video_call).start()
-    threading.Thread(target=run_bulk_transfer).start()
+def bulk_transfer(src, dst_ip):
+    port = 5003
+    print(f"[BULK] {src.name} -> {dst_ip}:{port}")
+    src.popen(f"iperf3 -c {dst_ip} -p {port} -t 20 &")
+    src.popen(f"rsync largefile {dst_ip}:/dev/null &")
+
+# All traffic types
+traffic_types = [voip_call, video_stream, video_call, bulk_transfer]
+
+# Subnet-aware selection
+def get_random_host_pair(net):
+    group1 = [net.get(f"h{i}") for i in range(1, 4)]    # 10.0.0.1-3
+    group2 = [net.get(f"h{i}") for i in range(4, 7)]    # 10.0.1.1-3
+
+    if random.random() > 0.5:
+        src = random.choice(group1)
+        dst = random.choice(group2)
+    else:
+        src = random.choice(group2)
+        dst = random.choice(group1)
+    return src, dst
+
+# Traffic generator loop
+def generate_random_traffic(net):
+    while True:
+        src, dst = get_random_host_pair(net)
+        traffic_func = random.choice(traffic_types)
+        traffic_func(src, dst.IP())
+        time.sleep(random.uniform(2, 5))
+
+
+# === Entry Point Called from Topology ===
+def start_traffic(net, threads=5):
+    print("[*] Starting traffic generation...")
+    for _ in range(threads):
+        t = threading.Thread(target=generate_random_traffic, args=(net,))
+        t.daemon = True
+        t.start()
+    print("[*] Traffic manager running in background.")

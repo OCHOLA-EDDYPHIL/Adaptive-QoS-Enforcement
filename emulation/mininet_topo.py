@@ -1,3 +1,8 @@
+import subprocess
+import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), 'traffic_generation'))
+import traffic_manager
 from mininet.topo import Topo
 from mininet.net import Mininet
 from mininet.node import Node, OVSKernelSwitch
@@ -40,6 +45,8 @@ class QoSTopo(Topo):
         self.addLink(router, switch2, intfName1='r1-eth1', cls=TCLink, bw=10, delay='50ms', loss=1)
 
 def run_topo():
+    project_dir = "/home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti"
+
     topo = QoSTopo()
     net = Mininet(topo=topo, link=TCLink, switch=OVSKernelSwitch, controller=None)
     net.start()
@@ -58,22 +65,26 @@ def run_topo():
 
     r1.cmd("sysctl -w net.ipv4.ip_forward=1")
     info(r1.cmd("sysctl net.ipv4.ip_forward"))
-    net.pingAll()
+    # net.pingAll()
 
-    # Start classifier daemon
-    info("[*] Starting classifier daemon in background on router...\n")
-    r1.cmd(f"source /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/.venv/bin/activate")
-    r1.cmd(f"python3 /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/scripts/classification/classifier_daemon.py &")
+    # Launch interactive terminals for classifier and QoS controller on r1
+    info("[*] Launching classifier daemon in xterm...\n")
+    r1.cmd("xterm -hold -e bash -c 'source {0}/.venv/bin/activate && python3 {0}/scripts/classification/classifier_daemon.py' &".format(project_dir))
+
+    info("[*] Launching QoS controller in xterm...\n")
+    r1.cmd("xterm -hold -e bash -c 'source {0}/.venv/bin/activate && python3 {0}/scripts/qos_controller.py' &".format(project_dir))
+
+    # Start listening servers on hosts
     for i in range(1, 7):
         h = net.get(f'h{i}')
-        h.cmd(f"source /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/.venv/bin/activate")
+        ip_address = h.IP()
+        h.cmd(f"sipp -sn uac {ip_address} -p 5060 &")
+        h.cmd("python3 -m http.server 8080 &")
+        h.cmd("iperf3 -s -p 5003 &")
+        h.cmd("iperf3 -s -p 5010 &")
 
-
-    # Start QoS controller
-    info("[*] Starting QoS controller in background on router...\n")
-    qos_controller = f"/home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/scripts/qos_controller.py"
-    r1.cmd(f"python3 {qos_controller} &")
-
+    info("[*] Starting traffic manager...\n")
+    traffic_manager.start_traffic(net)
     print("[*] Ready. Use xterm h1 h2 h3 ... to interact. Start daemon on r1.")
     CLI(net)
     net.stop()
