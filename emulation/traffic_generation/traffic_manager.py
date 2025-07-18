@@ -7,6 +7,7 @@ import time
 def voip_call(src, dst_ip):
     port = random.randint(5060, 5090)
     print(f"[VOIP] {src.name} -> {dst_ip}:{port}")
+    src.popen(f"yes | nc -u {dst_ip} {port} &")
     src.popen(f"sipp -sn uac {dst_ip}:{port} -p {port} -m 1 &")
 
 def video_stream(src, dst_ip):

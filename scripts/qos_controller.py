@@ -86,13 +86,13 @@ def process_packet(pkt):
 
 # === Adaptive Policy ===
 def adapt_qos_policy(iface, stats):
-    global last_policy
+    global last_policy_change
 
     if not ADAPTIVE_MODE:
         return
 
     now = datetime.now()
-    if now - last_policy["timestamp"] < RECONFIG_COOLDOWN:
+    if now - last_policy_change["timestamp"] < RECONFIG_COOLDOWN:
         return  # cooldown active
 
     voip_pkts = stats.get("Tin0_pkts", 0)
@@ -110,8 +110,8 @@ def adapt_qos_policy(iface, stats):
     elif voip_pkts < 30 and video_pkts < 50 and bulk_pkts < 100:
         new_mode = "default"
 
-    if new_mode and new_mode != last_policy["mode"]:
-        print(f"[QoS] Switching policy: {last_policy['mode']} → {new_mode}")
+    if new_mode and new_mode != last_policy_change["mode"]:
+        print(f"[QoS] Switching policy: {last_policy_change['mode']} → {new_mode}")
 
         cmd = ["tc", "qdisc", "replace", "dev", iface, "root", "cake", "diffserv8", "nat"]
         if new_mode == "voip_priority":
@@ -124,7 +124,7 @@ def adapt_qos_policy(iface, stats):
             cmd += ["bandwidth", "10mbit", "rtt", "100ms"]
 
         subprocess.run(cmd)
-        last_policy = {"mode": new_mode, "timestamp": now}
+        last_policy_change = {"mode": new_mode, "timestamp": now}
 
 # === Logging ===
 def write_metrics_to_csv(timestamp, iface, stats):
