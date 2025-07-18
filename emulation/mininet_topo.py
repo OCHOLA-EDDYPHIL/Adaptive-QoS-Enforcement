@@ -18,39 +18,53 @@ class QoSTopo(Topo):
     def build(self):
         router = self.addNode('r1', cls=LinuxRouter)
         switch = self.addSwitch('s1')
-
+        switch2 = self.addSwitch('s2')
+        # LAN A hosts
         h1 = self.addHost('h1', ip='10.0.0.1/24', defaultRoute='via 10.0.0.254')
         h2 = self.addHost('h2', ip='10.0.0.2/24', defaultRoute='via 10.0.0.254')
         h3 = self.addHost('h3', ip='10.0.0.3/24', defaultRoute='via 10.0.0.254')
-
+        # LAN B hosts
+        h4 = self.addHost('h4', ip='10.0.1.1/24', defaultRoute='via 10.0.1.254')
+        h5 = self.addHost('h5', ip='10.0.1.2/24', defaultRoute='via 10.0.1.254')
+        h6 = self.addHost('h6', ip='10.0.1.3/24', defaultRoute='via 10.0.1.254')
+        # LAN A switch connections
         self.addLink(h1, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
         self.addLink(h2, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
         self.addLink(h3, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
+        # LAN B switch connections
+        self.addLink(h4, switch2, cls=TCLink, bw=10, delay='50ms', loss=1)
+        self.addLink(h5, switch2, cls=TCLink, bw=10, delay='50ms', loss=1)
+        self.addLink(h6, switch2, cls=TCLink, bw=10, delay='50ms', loss=1)
+
         self.addLink(router, switch, intfName1='r1-eth0', cls=TCLink, bw=10, delay='50ms', loss=1)
+        self.addLink(router, switch2, intfName1='r1-eth1', cls=TCLink, bw=10, delay='50ms', loss=1)
 
 def run_topo():
     topo = QoSTopo()
     net = Mininet(topo=topo, link=TCLink, switch=OVSKernelSwitch, controller=None)
     net.start()
+    info("[*] Starting network...\n")
     net.get('s1').cmd('ovs-vsctl set Bridge s1 fail_mode=standalone')
-    net.pingAll()
+    net.get('s2').cmd('ovs-vsctl set Bridge s2 fail_mode=standalone')
     r1 = net.get('r1')
 
     # Ensure router's LAN IP is set correctly
-    r1.cmd("ip addr flush dev r1-eth0")
-    r1.cmd("ip addr add 10.0.0.254/24 dev r1-eth0")
-    r1.cmd("ip link set r1-eth0 up")
-    r1.cmd("sysctl -w net.ipv4.ip_forward=1")
+    for i,iface in enumerate(['r1-eth0', 'r1-eth1']):
+        r1.cmd(f"ip addr flush dev {iface}")
+        r1.cmd(f"ip addr add 10.0.{i}.254/24 dev {iface}")
+        r1.cmd(f"ip link set {iface} up")
+        # Start CAKE on LAN-facing interface only
+        r1.cmd(f"tc qdisc replace dev {iface} root cake bandwidth 10mbit diffserv8")
 
+    r1.cmd("sysctl -w net.ipv4.ip_forward=1")
     info(r1.cmd("sysctl net.ipv4.ip_forward"))
-    # Start CAKE on LAN-facing interface only
-    r1.cmd("tc qdisc replace dev r1-eth0 root cake bandwidth 10mbit diffserv8")
+    net.pingAll()
 
     # Start classifier daemon
     info("[*] Starting classifier daemon in background on router...\n")
     r1.cmd(f"source /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/.venv/bin/activate")
     r1.cmd(f"python3 /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/scripts/classification/classifier_daemon.py &")
-    for i in range(1, 4):
+    for i in range(1, 7):
         h = net.get(f'h{i}')
         h.cmd(f"source /home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/.venv/bin/activate")
 
@@ -58,9 +72,9 @@ def run_topo():
     # Start QoS controller
     info("[*] Starting QoS controller in background on router...\n")
     qos_controller = f"/home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti/scripts/qos_controller.py"
-    # r1.cmd(f"python3 {qos_controller} &")
+    r1.cmd(f"python3 {qos_controller} &")
 
-    print("[*] Ready. Use xterm h1 h2 h3 to interact. Start daemon on r1.")
+    print("[*] Ready. Use xterm h1 h2 h3 ... to interact. Start daemon on r1.")
     CLI(net)
     net.stop()
 
