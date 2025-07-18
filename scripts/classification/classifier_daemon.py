@@ -4,7 +4,7 @@ import joblib
 import time
 import pandas as pd
 import subprocess
-from threading import Lock
+from threading import Lock, Thread
 
 # === Load classifier and encoders ===
 project_dir = "/home/nyamabites/Desktop/INCEPTION/projectz/pythonprojectz/cnsprojecti"
@@ -136,6 +136,17 @@ def classify_flow(key, flow):
         print(f"[!] Classification error: {e}")
 
 
+def sniff_on_interface(iface):
+    print(f"[*] Sniffing on {iface} ...")
+    sniff(iface=iface, prn=packet_handler, store=False)
+
 if __name__ == "__main__":
     print("[*] QoS classifier daemon starting ...")
-    sniff(prn=packet_handler, store=False, iface="r1-eth0")
+    for iface in ["r1-eth0", "r1-eth1"]:
+        print(f"[*] Starting sniffer on {iface} ...")
+        Thread(target=sniff_on_interface, args=(iface,), daemon=True).start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("[*] Stopping QoS classifier daemon.")
