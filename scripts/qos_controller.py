@@ -98,7 +98,11 @@ def parse_cake_stats(iface):
     total_pkts = sum(stats[f"Tin{i}_pkts"] for i in range(CAKE_TINS))
     total_bytes = sum(stats[f"Tin{i}_bytes"] for i in range(CAKE_TINS))
     print(f"[DEBUG] Total parsed: {total_pkts} packets, {total_bytes} bytes")
-
+    print(f"[DEBUG] CAKE stats for {iface}:")
+    for tin in range(CAKE_TINS):
+        pkts = stats.get(f"Tin{tin}_pkts", 0)
+        bytes_ = stats.get(f"Tin{tin}_bytes", 0)
+        print(f"  Tin{tin}: {pkts} pkts | {bytes_} bytes")
     return stats
 
 # === Passive QoS Metric Estimation ===
@@ -151,14 +155,12 @@ def adapt_qos_policy(iface, stats):
 
     now = datetime.now()
     if now - last_policy_change["timestamp"] < RECONFIG_COOLDOWN:
-        print("[DEBUG] Skipping policy change due to cooldown.")
-        return
+        return  # cooldown active
 
-    voip_pkts = stats.get("Tin6_pkts", 0)
-    video_pkts = stats.get("Tin4_pkts", 0)
-    bulk_pkts = stats.get("Tin3_pkts", 0)
-
-    print(f"[DEBUG] Packet counts - VoIP: {voip_pkts}, Video: {video_pkts}, Bulk: {bulk_pkts}")
+    # Corrected Tin assignments
+    voip_pkts = stats.get("Tin3_pkts", 0)   # EF → Tin 3
+    video_pkts = stats.get("Tin2_pkts", 0)  # AF41 → Tin 2
+    bulk_pkts = stats.get("Tin0_pkts", 0)   # CS1 → Tin 0
 
     new_mode = None
 

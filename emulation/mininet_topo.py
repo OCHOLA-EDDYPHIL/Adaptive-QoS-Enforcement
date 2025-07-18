@@ -1,6 +1,8 @@
 import subprocess
 import os
 import sys
+import time
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'traffic_generation'))
 import traffic_manager
 from mininet.topo import Topo
@@ -84,8 +86,7 @@ def run_topo():
         h.cmd("iperf3 -s -p 5010 &")
 
     info("[*] Starting traffic manager...\n")
-    traffic_manager.start_traffic(net)
-    print("[*] Ready. Use xterm h1 h2 h3 ... to interact. Start daemon on r1.")
+    traffic_manager.start_traffic(net, duration=60)
     CLI(net)
     net.stop()
 
