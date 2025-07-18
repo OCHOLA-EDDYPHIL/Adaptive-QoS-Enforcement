@@ -26,20 +26,21 @@ class QoSTopo(Topo):
         self.addLink(h1, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
         self.addLink(h2, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
         self.addLink(h3, switch, cls=TCLink, bw=10, delay='50ms', loss=1)
-        self.addLink(router, switch, intfName1='r1-eth0', params1={'ip': '10.0.0.254/24'}, cls=TCLink, bw=10, delay='50ms', loss=1)
+        self.addLink(router, switch, intfName1='r1-eth0', cls=TCLink, bw=10, delay='50ms', loss=1)
 
 def run_topo():
     topo = QoSTopo()
     net = Mininet(topo=topo, link=TCLink, switch=OVSKernelSwitch, controller=None)
     net.start()
+    net.get('s1').cmd('ovs-vsctl set Bridge s1 fail_mode=standalone')
     net.pingAll()
     r1 = net.get('r1')
 
     # Ensure router's LAN IP is set correctly
-    # r1.cmd("ip addr flush dev r1-eth0")
-    # r1.cmd("ip addr add 10.0.0.254/24 dev r1-eth0")
-    # r1.cmd("ip link set r1-eth0 up")
-    # r1.cmd("sysctl -w net.ipv4.ip_forward=1")
+    r1.cmd("ip addr flush dev r1-eth0")
+    r1.cmd("ip addr add 10.0.0.254/24 dev r1-eth0")
+    r1.cmd("ip link set r1-eth0 up")
+    r1.cmd("sysctl -w net.ipv4.ip_forward=1")
 
     info(r1.cmd("sysctl net.ipv4.ip_forward"))
     # Start CAKE on LAN-facing interface only
