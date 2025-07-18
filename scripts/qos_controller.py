@@ -21,26 +21,84 @@ flow_lock = Lock()
 
 # === Monitoring Helpers ===
 def parse_cake_stats(iface):
-    output = subprocess.check_output(["tc", "-s", "qdisc", "show", "dev", iface], text=True)
-    lines = output.splitlines()
-    stats = {f"Tin{i}_pkts": 0 for i in range(CAKE_TINS)}
-    stats.update({f"Tin{i}_bytes": 0 for i in range(CAKE_TINS)})
+    """Parse CAKE qdisc statistics from tc command output"""
+    print(f"\n[DEBUG] Running: tc -s qdisc show dev {iface}")
 
-    current_tin = -1
-    for line in lines:
+    try:
+        output = subprocess.check_output(["tc", "-s", "qdisc", "show", "dev", iface], text=True)
+        print(output)  # DEBUG full raw output
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Failed to get tc stats: {e}")
+        return {f"Tin{i}_pkts": 0 for i in range(CAKE_TINS)}
+
+    # Initialize stats dictionary
+    stats = {}
+    for i in range(CAKE_TINS):
+        stats[f"Tin{i}_pkts"] = 0
+        stats[f"Tin{i}_bytes"] = 0
+
+    lines = output.splitlines()
+
+    # Look for the statistics table section
+    tin_header_found = False
+    pkts_line_idx = -1
+    bytes_line_idx = -1
+
+    for i, line in enumerate(lines):
         line = line.strip()
-        if line.startswith("Tin"):
-            try:
-                current_tin = int(line.split()[1])
-            except:
-                continue
-        elif "pkts" in line and current_tin >= 0:
-            parts = line.split()
-            try:
-                stats[f"Tin{current_tin}_pkts"] = int(parts[0])
-                stats[f"Tin{current_tin}_bytes"] = int(parts[1])
-            except:
-                continue
+
+        # Find the tin header line
+        if line.startswith("Tin 0") and "Tin 1" in line:
+            tin_header_found = True
+            print(f"[DEBUG] Found tin header at line {i}: {line}")
+            continue
+
+        # Find pkts line after tin header
+        if tin_header_found and line.startswith("pkts"):
+            pkts_line_idx = i
+            print(f"[DEBUG] Found pkts line at {i}: {line}")
+
+        # Find bytes line after tin header
+        if tin_header_found and line.startswith("bytes"):
+            bytes_line_idx = i
+            print(f"[DEBUG] Found bytes line at {i}: {line}")
+            break
+
+    # Parse packet counts
+    if pkts_line_idx >= 0:
+        pkts_line = lines[pkts_line_idx].strip()
+        # Split and skip the "pkts" label
+        pkts_values = pkts_line.split()[1:]  # Skip "pkts" label
+        print(f"[DEBUG] Parsed pkts values: {pkts_values}")
+
+        for i, value in enumerate(pkts_values):
+            if i < CAKE_TINS:
+                try:
+                    stats[f"Tin{i}_pkts"] = int(value)
+                    print(f"[DEBUG] Tin{i}_pkts = {value}")
+                except ValueError:
+                    print(f"[WARNING] Could not parse pkts value '{value}' for Tin{i}")
+
+    # Parse byte counts
+    if bytes_line_idx >= 0:
+        bytes_line = lines[bytes_line_idx].strip()
+        # Split and skip the "bytes" label
+        bytes_values = bytes_line.split()[1:]  # Skip "bytes" label
+        print(f"[DEBUG] Parsed bytes values: {bytes_values}")
+
+        for i, value in enumerate(bytes_values):
+            if i < CAKE_TINS:
+                try:
+                    stats[f"Tin{i}_bytes"] = int(value)
+                    print(f"[DEBUG] Tin{i}_bytes = {value}")
+                except ValueError:
+                    print(f"[WARNING] Could not parse bytes value '{value}' for Tin{i}")
+
+    # Verify we got some data
+    total_pkts = sum(stats[f"Tin{i}_pkts"] for i in range(CAKE_TINS))
+    total_bytes = sum(stats[f"Tin{i}_bytes"] for i in range(CAKE_TINS))
+    print(f"[DEBUG] Total parsed: {total_pkts} packets, {total_bytes} bytes")
+
     return stats
 
 # === Passive QoS Metric Estimation ===
@@ -93,11 +151,14 @@ def adapt_qos_policy(iface, stats):
 
     now = datetime.now()
     if now - last_policy_change["timestamp"] < RECONFIG_COOLDOWN:
-        return  # cooldown active
+        print("[DEBUG] Skipping policy change due to cooldown.")
+        return
 
-    voip_pkts = stats.get("Tin0_pkts", 0)
-    video_pkts = stats.get("Tin1_pkts", 0)
-    bulk_pkts = stats.get("Tin2_pkts", 0)
+    voip_pkts = stats.get("Tin6_pkts", 0)
+    video_pkts = stats.get("Tin4_pkts", 0)
+    bulk_pkts = stats.get("Tin3_pkts", 0)
+
+    print(f"[DEBUG] Packet counts - VoIP: {voip_pkts}, Video: {video_pkts}, Bulk: {bulk_pkts}")
 
     new_mode = None
 
@@ -123,25 +184,34 @@ def adapt_qos_policy(iface, stats):
         elif new_mode == "default":
             cmd += ["bandwidth", "10mbit", "rtt", "100ms"]
 
+        print(f"[DEBUG] Running tc command: {' '.join(cmd)}")
         subprocess.run(cmd)
         last_policy_change = {"mode": new_mode, "timestamp": now}
+    else:
+        print(f"[DEBUG] No policy change needed. Current mode: {last_policy_change['mode']}")
 
 # === Logging ===
 def write_metrics_to_csv(timestamp, iface, stats):
     fieldnames = ["timestamp", "iface"] + list(stats.keys())
     file_exists = False
     try:
-        with open(CSV_LOG, "r"): file_exists = True
+        with open(CSV_LOG, "r"):
+            file_exists = True
     except FileNotFoundError:
         pass
 
-    with open(CSV_LOG, "a", newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        row = {"timestamp": timestamp, "iface": iface}
-        row.update(stats)
-        writer.writerow(row)
+    try:
+        with open(CSV_LOG, "a", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                print("[DEBUG] Creating new CSV file and writing headers.")
+                writer.writeheader()
+            row = {"timestamp": timestamp, "iface": iface}
+            row.update(stats)
+            writer.writerow(row)
+            print(f"[DEBUG] Wrote stats for {iface} to CSV at {timestamp}")
+    except Exception as e:
+        print(f"[ERROR] Failed to write to CSV: {e}")
 
 # === Sniffer Thread ===
 def sniff_packets(iface):
@@ -160,6 +230,6 @@ if __name__ == "__main__":
         for iface in INTERFACES:
             stats = parse_cake_stats(iface)
             ts = datetime.now().isoformat()
-            write_metrics_to_csv(ts, iface, stats)
             adapt_qos_policy(iface, stats)
+            write_metrics_to_csv(ts, iface, stats)
         time.sleep(MONITOR_INTERVAL)
